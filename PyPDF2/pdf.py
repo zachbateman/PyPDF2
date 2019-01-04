@@ -250,17 +250,17 @@ class PdfFileWriter(object):
 
         :param str fname: The filename to display.
         :param str fdata: The data in the file.
-      
+
         Reference:
         https://www.adobe.com/content/dam/Adobe/en/devnet/acrobat/pdfs/PDF32000_2008.pdf
         Section 7.11.3
         """
-        
+
         # We need 3 entries:
         # * The file's data
         # * The /Filespec entry
         # * The file's name, which goes in the Catalog
-        
+
 
         # The entry for the file
         """ Sample:
@@ -272,7 +272,7 @@ class PdfFileWriter(object):
         stream
         Hello world!
         endstream
-        endobj        
+        endobj
         """
         file_entry = DecodedStreamObject()
         file_entry.setData(fdata)
@@ -291,14 +291,14 @@ class PdfFileWriter(object):
         """
         efEntry = DictionaryObject()
         efEntry.update({ NameObject("/F"):file_entry })
-        
+
         filespec = DictionaryObject()
         filespec.update({
                 NameObject("/Type"): NameObject("/Filespec"),
                 NameObject("/F"): createStringObject(fname),  # Perhaps also try TextStringObject
                 NameObject("/EF"): efEntry
                 })
-                
+
         # Then create the entry for the root, as it needs a reference to the Filespec
         """ Sample:
         1 0 obj
@@ -309,13 +309,13 @@ class PdfFileWriter(object):
          /Names << /EmbeddedFiles << /Names [(hello.txt) 7 0 R] >> >>
         >>
         endobj
-        
+
         """
         embeddedFilesNamesDictionary = DictionaryObject()
         embeddedFilesNamesDictionary.update({
                 NameObject("/Names"): ArrayObject([createStringObject(fname), filespec])
                 })
-        
+
         embeddedFilesDictionary = DictionaryObject()
         embeddedFilesDictionary.update({
                 NameObject("/EmbeddedFiles"): embeddedFilesNamesDictionary
@@ -329,7 +329,7 @@ class PdfFileWriter(object):
         """
         Copy pages from reader to writer. Includes an optional callback parameter
         which is invoked after pages are appended to the writer.
-        
+
         :param reader: a PdfFileReader object from which to copy page
             annotations to this writer object.  The writer's annots
         will then be updated
@@ -373,7 +373,7 @@ class PdfFileWriter(object):
     def cloneReaderDocumentRoot(self, reader):
         '''
         Copy the reader document root to the writer.
-        
+
         :param reader:  PdfFileReader from the document root should be copied.
         :callback after_page_append
         '''
@@ -2686,6 +2686,44 @@ class PageObject(DictionaryObject):
                         text += i
                 text += "\n"
         return text
+
+    def extractTextItems(self):
+        """
+        Locate all text drawing commands, in the order they are provided in the
+        content stream, and extract the text.  This works well for some PDF
+        files, but poorly for others, depending on the generator used.
+
+        :return: a list object.
+        """
+        text = u_("")
+        content = self["/Contents"].getObject()
+        if not isinstance(content, ContentStream):
+            content = ContentStream(content, self.pdf)
+        # Note: we check all strings are TextStringObjects.  ByteStringObjects
+        # are strings where the byte->string encoding was unknown, so adding
+        # them to the text here would be gibberish.
+        text_items = []  # list of dicts
+        for operands, operator in content.operations:
+            if operator == b_("Tj"):
+                _text = operands[0]
+                if isinstance(_text, TextStringObject):
+                    text_items.append({'operator': operator, 'content': operands[0]})
+            # not checking operator == b_("T*") as this is used for positioning, not content
+            elif operator == b_("'"):
+                _text = operands[0]
+                if isinstance(_text, TextStringObject):
+                    text_items.append({'operator': operator, 'content': operands[0]})
+            elif operator == b_('"'):
+                _text = operands[2]
+                if isinstance(_text, TextStringObject):
+                    text_items.append({'operator': operator, 'content': operands[2]})
+            elif operator == b_("TJ"):
+                for i in operands[0]:
+                    if isinstance(i, TextStringObject):
+                        # below comprehension doesn't include numbers; believe they are for positioning (not text)
+                        text_items.append({'operator': operator,
+                                           'content': ''.join(str(x) for x in operands[0] if not str(x).isdigit())})
+        return text_items
 
     mediaBox = createRectangleAccessor("/MediaBox", ())
     """
